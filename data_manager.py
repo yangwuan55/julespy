@@ -5,11 +5,15 @@ import os
 from datetime import datetime
 import numpy as np # For creating dummy NaN values in example
 
-# Ensure the data directory exists
-if not os.path.exists('data'):
-    os.makedirs('data')
+# Define DATA_DIR at module level for potential external use (e.g., by GUI tabs)
+DATA_DIR = "data"
 
-def load_csv(file_path):
+# Ensure the data directory exists at module load time
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+    print(f"Data directory '{DATA_DIR}' created.")
+
+def load_csv(file_path: str) -> pd.DataFrame | None:
     """
     Reads a CSV file into a pandas DataFrame.
 
@@ -17,7 +21,11 @@ def load_csv(file_path):
         file_path (str): The path to the CSV file.
 
     Returns:
-        pandas.DataFrame: The DataFrame loaded from the CSV file, or None if an error occurs.
+        pandas.DataFrame | None: The DataFrame loaded from the CSV file.
+                                 Returns None if an error occurs (e.g., file not found, parsing error).
+
+    Raises:
+        Prints error messages to console for common issues.
     """
     try:
         df = pd.read_csv(file_path)
@@ -35,15 +43,19 @@ def load_csv(file_path):
         print(f"An unexpected error occurred while reading {file_path}: {e}")
         return None
 
-def load_xlsx(file_path):
+def load_xlsx(file_path: str) -> pd.DataFrame | None:
     """
-    Reads an XLSX file into a pandas DataFrame.
+    Reads an XLSX (Excel) file into a pandas DataFrame.
 
     Args:
-        file_path (str): The path to the XLSX file.
+        file_path (str): The path to the XLSX file. Assumes the first sheet is to be read.
 
     Returns:
-        pandas.DataFrame: The DataFrame loaded from the XLSX file, or None if an error occurs.
+        pandas.DataFrame | None: The DataFrame loaded from the XLSX file.
+                                 Returns None if an error occurs (e.g., file not found, parsing error).
+
+    Raises:
+        Prints error messages to console for common issues.
     """
     try:
         df = pd.read_excel(file_path)
@@ -51,34 +63,45 @@ def load_xlsx(file_path):
     except FileNotFoundError:
         print(f"Error: File not found at {file_path}")
         return None
-    except ValueError as ve: # Often raised for bad XLSX files by openpyxl
+    except ValueError as ve:
         print(f"Error: Could not read {file_path}. Ensure it is a valid XLSX file. Details: {ve}")
         return None
-    except Exception as e: # General exception for other pandas/excel related errors
+    except Exception as e:
         print(f"An unexpected error occurred while reading {file_path}: {e}")
         return None
 
-def download_data(symbol, start_date, end_date, source='yahoo'):
+def download_data(symbol: str, start_date: str, end_date: str, source: str = 'yahoo') -> pd.DataFrame | None:
     """
-    Downloads historical financial data and caches it.
+    Downloads historical financial data for a given symbol and date range from a specified source.
+    Caches the downloaded data to the `data/` directory to avoid re-downloading.
+    If cached data is found, it's loaded directly.
 
     Args:
-        symbol (str): The stock symbol (e.g., 'AAPL' for Yahoo, 'BTCUSDT' for Binance).
-        start_date (str): Start date in 'YYYY-MM-DD' format.
-        end_date (str): End date in 'YYYY-MM-DD' format.
-        source (str): 'yahoo' or 'binance'.
+        symbol (str): The stock/cryptocurrency symbol (e.g., 'AAPL' for Yahoo, 'BTCUSDT' for Binance).
+        start_date (str): Start date for the data in 'YYYY-MM-DD' format.
+        end_date (str): End date for the data in 'YYYY-MM-DD' format.
+        source (str): The data source, either 'yahoo' (Yahoo Finance) or 'binance' (Binance).
+                      Defaults to 'yahoo'.
 
     Returns:
-        pandas.DataFrame: DataFrame with historical data, or None if an error occurs.
+        pandas.DataFrame | None: A DataFrame containing the historical OHLCV (Open, High, Low, Close, Volume) data.
+                                 The DataFrame index is set to 'Date' (for Yahoo) or 'timestamp' (for Binance).
+                                 Returns None if data download or processing fails.
+
+    Raises:
+        Prints error messages to console for common issues like network errors or API problems.
     """
     filename_start_date = start_date.replace('-', '')
     filename_end_date = end_date.replace('-', '')
-    cache_filename = f"data/{symbol.upper()}_{source.upper()}_{filename_start_date}_{filename_end_date}.csv"
+    # Use DATA_DIR constant for constructing cache path
+    cache_filename = os.path.join(DATA_DIR, f"{symbol.upper()}_{source.upper()}_{filename_start_date}_{filename_end_date}.csv")
 
     if os.path.exists(cache_filename):
         print(f"Loading cached data for {symbol} from {cache_filename}")
         try:
             if source == 'yahoo':
+                # Yahoo data saved by yf.download often has a MultiIndex header if group_by='column' (default)
+                # or if saved directly. The specific loading here handles that structure.
                 data = pd.read_csv(cache_filename, header=[0,1], index_col=0, skiprows=[2])
                 data.index = pd.to_datetime(data.index)
                 data.index.name = 'Date'
@@ -86,7 +109,7 @@ def download_data(symbol, start_date, end_date, source='yahoo'):
                 data = pd.read_csv(cache_filename, index_col=0)
                 data.index = pd.to_datetime(data.index)
                 data.index.name = 'timestamp'
-            else:
+            else: # Should ideally not be reached if source is validated, but as a fallback:
                 data = pd.read_csv(cache_filename, index_col=0)
             return data
         except Exception as e:
@@ -100,28 +123,36 @@ def download_data(symbol, start_date, end_date, source='yahoo'):
             if data.empty:
                 print(f"No data found for {symbol} on Yahoo Finance for the given period.")
                 return None
+            # yfinance data has 'Date' as index by default. Column names might be MultiIndex.
         elif source == 'binance':
             client = Client()
             start_ms = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp() * 1000)
+            # Binance API end_ms is exclusive for get_historical_klines, so adjust if necessary
+            # or ensure end_date is inclusive for user. For daily, it's usually fine.
             end_ms = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp() * 1000)
+
             klines = client.get_historical_klines(symbol, Client.KLINE_INTERVAL_1DAY, start_ms, end_ms_str=str(end_ms))
             if not klines:
                 print(f"No data found for {symbol} on Binance for the given period.")
                 return None
+
             columns = ['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close_time',
                        'Quote_asset_volume', 'Number_of_trades', 'Taker_buy_base_asset_volume',
                        'Taker_buy_quote_asset_volume', 'Ignore']
             data = pd.DataFrame(klines, columns=columns)
             data['timestamp'] = pd.to_datetime(data['timestamp'], unit='ms')
+            # Select relevant columns and set timestamp as index
             data = data[['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']].set_index('timestamp')
-            for col in data.columns:
-                if col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-                    data[col] = pd.to_numeric(data[col], errors='coerce')
+            # Convert OHLCV columns to numeric, as Binance API might return them as strings
+            for col_name in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                if col_name in data.columns: # Ensure column exists before conversion
+                    data[col_name] = pd.to_numeric(data[col_name], errors='coerce')
         else:
             print(f"Error: Unknown source '{source}'. Choose 'yahoo' or 'binance'.")
             return None
 
         if data is not None and not data.empty:
+            # Save with index (Date or timestamp)
             data.to_csv(cache_filename, index=True)
             print(f"Data for {symbol} saved to {cache_filename}")
         return data
@@ -129,15 +160,43 @@ def download_data(symbol, start_date, end_date, source='yahoo'):
         print(f"Error downloading/processing data for {symbol} from {source}: {e}")
         return None
 
-def preprocess_data(df_input):
+def preprocess_data(df_input: pd.DataFrame | None) -> pd.DataFrame | None:
     """
-    Preprocesses financial data to a unified K-line format and handles missing values.
+    Preprocesses financial market data to a unified format.
+
+    The unified format consists of:
+    - Index: 'Timestamp' (pandas.DatetimeIndex)
+    - Columns: 'Open', 'High', 'Low', 'Close', 'Volume' (all numeric)
+
+    Preprocessing steps include:
+    1.  **Column Unification**:
+        - Handles potential MultiIndex columns from sources like Yahoo Finance (cached).
+        - Renames common column name variations (e.g., 'Date' to 'Timestamp', 'Adj Close' to 'Close')
+          to the standard names.
+    2.  **Timestamp Indexing**:
+        - Converts the date/time column to a pandas DatetimeIndex and sets it as 'Timestamp'.
+        - If already indexed by a date-like field, standardizes its name to 'Timestamp'.
+    3.  **Column Selection**: Ensures only 'Open', 'High', 'Low', 'Close', 'Volume' columns are present.
+                            Missing columns are added with NaN values before filling.
+    4.  **Missing Data Handling**:
+        - Forward fills (`ffill()`) missing values to propagate last known values.
+        - Fills any remaining NaNs (typically at the beginning of the dataset) with 0.
 
     Args:
-        df_input (pandas.DataFrame): Input DataFrame with financial data.
+        df_input (pandas.DataFrame | None): Input DataFrame, potentially with:
+            - Varied column names (e.g., 'Date', 'Adj Close').
+            - MultiIndex columns (common from yfinance cached data).
+            - Missing values (NaNs).
+            - Date information either as a column or as the index.
 
     Returns:
-        pandas.DataFrame: Preprocessed DataFrame.
+        pandas.DataFrame | None: A new DataFrame with the unified structure and handled missing values.
+                                 Returns the input DataFrame if it's None or empty.
+                                 Returns the DataFrame as is if critical timestamp processing fails.
+
+    Notes:
+        The function attempts to be robust to different input structures but assumes
+        common conventions for financial timeseries data.
     """
     if df_input is None or df_input.empty:
         print("Input DataFrame is empty or None. No preprocessing done.")
@@ -145,187 +204,174 @@ def preprocess_data(df_input):
 
     df = df_input.copy()
 
-    # 1. Unify K-line format
-    # Standard column names
-    target_columns = ['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']
+    target_columns_ohlcv = ['Open', 'High', 'Low', 'Close', 'Volume'] # For data part
 
-    # Handle Yahoo Finance specific column structure (MultiIndex)
+    # 1. Unify K-line format - Column Name Handling (especially for MultiIndex from yfinance cache)
     if isinstance(df.columns, pd.MultiIndex):
-        # Example: [('Price', 'Close'), ('Price', 'High'), ..., ('Ticker', 'AAPL')]
-        # We want to simplify to single level columns like 'Close', 'High', etc.
-        # And use the 'Price' part. If 'Ticker' level exists, we can drop it for data columns.
+        print("Preprocessing MultiIndex columns...")
+        # Flatten MultiIndex: typically takes the first level for OHLCV, e.g. ('Price', 'Open') -> 'Open'
+        # This simplification assumes the desired value is in the first level name.
+        # A more robust approach might inspect both levels.
 
-        # First, try to get columns that might be like ('Price', 'Open') or ('Open', 'AAPL')
-        simple_cols = {}
+        # Attempt to pick OHLCV from known structures like ('Price', 'Open') or ('Open', 'TICKER')
+        new_cols = {}
+        processed_col_names = set()
+
         for col_tuple in df.columns:
-            # col_tuple could be ('Price', 'Open') or ('Open', 'AAPL') or just 'Open'
-            # We look for OHLCV keywords in the tuple elements
-            if 'Open' in col_tuple: simple_cols['Open'] = df[col_tuple]
-            elif 'High' in col_tuple: simple_cols['High'] = df[col_tuple]
-            elif 'Low' in col_tuple: simple_cols['Low'] = df[col_tuple]
-            # Yahoo 'Close' is often 'Adj Close' if auto_adjust=False, but with auto_adjust=True it's 'Close'
-            # and represents adjusted.
-            elif 'Close' in col_tuple: simple_cols['Close'] = df[col_tuple]
-            elif 'Volume' in col_tuple: simple_cols['Volume'] = df[col_tuple]
+            # Find the relevant part of the tuple, e.g. 'Open' from ('Price', 'Open')
+            # Or 'Adj Close' to map to 'Close'
+            ohlcv_name = None
+            if 'Adj Close' in col_tuple : ohlcv_name = 'Close' # Map Adj Close first
+            elif 'Close' in col_tuple and 'Close' not in processed_col_names : ohlcv_name = 'Close'
+            elif 'Open' in col_tuple and 'Open' not in processed_col_names : ohlcv_name = 'Open'
+            elif 'High' in col_tuple and 'High' not in processed_col_names : ohlcv_name = 'High'
+            elif 'Low' in col_tuple and 'Low' not in processed_col_names : ohlcv_name = 'Low'
+            elif 'Volume' in col_tuple and 'Volume' not in processed_col_names : ohlcv_name = 'Volume'
 
-        if len(simple_cols) >= 4: # Check if we found OHLC and maybe V
-             df_new = pd.DataFrame(simple_cols)
-             # If original df index is 'Date', copy it
-             if df.index.name == 'Date' or df.index.name == 'timestamp':
-                 df_new.index = df.index
-             df = df_new
-        else: # Fallback if tuple parsing is not as expected
-            print("Warning: Could not reliably parse MultiIndex columns for Yahoo. Attempting basic flattening.")
-            # Basic flattening: take the first level of MultiIndex if it's like ('Price', 'Open')
-            # or the second if it's like ('Open', 'Symbol')
-            if any('Price' in c for c in df.columns.get_level_values(0)):
-                 df.columns = df.columns.get_level_values(0) # e.g. Price_Open -> Open
-            elif len(df.columns.levels) > 1: # e.g. ('Open', 'AAPL')
-                 df.columns = df.columns.get_level_values(0)
+            if ohlcv_name and ohlcv_name not in new_cols: # Take first match for each OHLCV type
+                new_cols[ohlcv_name] = df[col_tuple]
+                processed_col_names.add(ohlcv_name)
+
+        if len(new_cols) >= 4: # Found at least OHLC
+            df = pd.DataFrame(new_cols)
+            # Preserve original index name if it's date-like
+            if df_input.index.name in ['Date', 'timestamp', 'Datetime']:
+                df.index.name = df_input.index.name
+        else:
+            print("Warning: MultiIndex column parsing did not yield expected OHLCV. Attempting basic flattening.")
+            # Fallback: simple flattening, may not be ideal for all yfinance structures
+            df.columns = df.columns.get_level_values(0)
 
 
-    # Rename columns:
+    # 2. Standardize common column name variations to target names
     rename_map = {}
     for col in df.columns:
-        col_lower = str(col).lower()
-        if 'date' in col_lower and 'timestamp' not in col_lower : # e.g. 'Date' from Yahoo
-            rename_map[col] = 'Timestamp'
-        elif 'adj close' in col_lower:
-            rename_map[col] = 'Close'
-        elif 'open' in col_lower: rename_map[col] = 'Open'
-        elif 'high' in col_lower: rename_map[col] = 'High'
-        elif 'low' in col_lower: rename_map[col] = 'Low'
-        elif 'close' in col_lower and 'adj close' not in col_lower : # ensure 'Close' is not overwritten by 'Adj Close' logic if both present
-             if 'Close' not in rename_map.values(): rename_map[col] = 'Close'
-        elif 'volume' in col_lower: rename_map[col] = 'Volume'
-
+        col_str = str(col) # Ensure column name is a string for .lower()
+        col_lower = col_str.lower()
+        if 'date' == col_lower and 'timestamp' not in rename_map.values(): rename_map[col] = 'Timestamp' # If 'Date' is a column
+        elif 'adj close' == col_lower: rename_map[col] = 'Close'
+        elif 'open' == col_lower and 'Open' not in rename_map.values(): rename_map[col] = 'Open'
+        elif 'high' == col_lower and 'High' not in rename_map.values(): rename_map[col] = 'High'
+        elif 'low' == col_lower and 'Low' not in rename_map.values(): rename_map[col] = 'Low'
+        elif 'close' == col_lower and 'Close' not in rename_map.values(): rename_map[col] = 'Close'
+        elif 'volume' == col_lower and 'Volume' not in rename_map.values(): rename_map[col] = 'Volume'
     df.rename(columns=rename_map, inplace=True)
 
-    # If 'Timestamp' is a column (after potential rename from 'Date'), convert and set as index
-    if 'Timestamp' in df.columns:
+    # 3. Timestamp Indexing: Ensure a DatetimeIndex named 'Timestamp'
+    if 'Timestamp' in df.columns: # If 'Timestamp' (or previously 'Date') was a column
         df['Timestamp'] = pd.to_datetime(df['Timestamp'])
         df.set_index('Timestamp', inplace=True)
-    elif df.index.name is not None and ('date' in str(df.index.name).lower() or 'timestamp' in str(df.index.name).lower()):
-        # If index is already date-like (e.g., 'Date' from Yahoo, 'timestamp' from Binance)
-        df.index = pd.to_datetime(df.index)
-        df.index.name = 'Timestamp' # Standardize index name
-    else:
-        print("Warning: No clear 'Date' or 'Timestamp' column/index found for setting as Timestamp index.")
-        # Attempt to convert the current index if it's not already datetime
-        if not isinstance(df.index, pd.DatetimeIndex):
-            try:
-                df.index = pd.to_datetime(df.index)
-                df.index.name = 'Timestamp'
-                print("Converted existing index to DatetimeIndex and named 'Timestamp'.")
-            except Exception as e:
-                print(f"Error: Could not convert existing index to DatetimeIndex: {e}")
-                return df # Return df as is if timestamping fails critically
+    elif isinstance(df.index, pd.DatetimeIndex): # If index is already DatetimeIndex
+        df.index.name = 'Timestamp' # Standardize name
+    else: # Attempt to convert current index if it's not DatetimeIndex
+        try:
+            df.index = pd.to_datetime(df.index)
+            df.index.name = 'Timestamp'
+            print("Converted existing index to DatetimeIndex and named 'Timestamp'.")
+        except Exception as e:
+            print(f"Warning: Could not convert DataFrame index to DatetimeIndex: {e}. Index remains as is.")
+            # If index conversion fails, it might be problematic for time-series operations.
+            # Depending on requirements, could return None or raise error. For now, proceed.
 
-    # Ensure all target columns exist, add if missing (will be NaN initially)
-    for col in target_columns:
-        if col not in df.columns and col != 'Timestamp': # Timestamp is index
-            df[col] = np.nan
-            print(f"Added missing column: {col}")
+    # 4. Ensure all target OHLCV columns exist, add if missing (will be NaN initially)
+    for col_name in target_columns_ohlcv:
+        if col_name not in df.columns:
+            df[col_name] = np.nan
+            print(f"Added missing column: {col_name} (filled with NaN initially)")
 
-    # Select and reorder to standard format
-    # Filter out columns not in target_columns (if Timestamp is index)
-    final_cols = [tc for tc in target_columns if tc != 'Timestamp']
-    df = df[final_cols]
+    # Select and reorder to standard OHLCV format (plus any other existing columns not specified)
+    # Keep other columns if they exist, but ensure OHLCV are present and first.
+    other_existing_cols = [col for col in df.columns if col not in target_columns_ohlcv]
+    df = df[target_columns_ohlcv + other_existing_cols]
 
 
-    # 2. Handle missing data
-    # Forward fill
-    df.ffill(inplace=True)
-    # Fill remaining NaNs (e.g., at the beginning) with 0
-    df.fillna(0, inplace=True)
+    # 5. Handle missing data in OHLCV columns
+    for col_name in target_columns_ohlcv:
+        if col_name in df.columns:
+            df[col_name].ffill(inplace=True) # Forward fill first
+            df[col_name].fillna(0, inplace=True) # Then fill remaining (e.g., at start) with 0
+        else:
+            # This should not happen if step 4 worked, but as a safeguard:
+            print(f"Warning: Column {col_name} still missing after attempting to add it.")
+
 
     print("Data preprocessing complete.")
     return df
 
 
 if __name__ == '__main__':
-    print("--- Data Loading Examples (CSV/XLSX) ---")
-    # ... (previous CSV/XLSX loading examples - kept for brevity) ...
-    try:
-        with open("dummy.csv", "w") as f:
-            f.write("col1,col2\n1,a\n2,b")
-        # Create a dummy CSV with some financial-like data and missing values for preprocessing demo
-        dummy_financial_data = {
-            'Date': pd.to_datetime(['2023-01-01', '2023-01-02', '2023-01-03', '2023-01-04', '2023-01-05']),
-            'Open': [10, 11, np.nan, 13, 14],
-            'High': [15, np.nan, 17, 18, 19],
-            'Low': [9, 10, 11, 12, np.nan],
-            'Adj Close': [12, 13, 14, np.nan, 16],
-            'Volume': [1000, 1100, 1200, np.nan, 1400]
-        }
-        dummy_df = pd.DataFrame(dummy_financial_data)
-        dummy_df.to_csv("dummy_financial.csv", index=False)
-        print("Dummy financial CSV created for preprocessing demo.")
-    except Exception as e:
-        print(f"Failed to create dummy financial CSV: {e}")
+    print("--- Data Manager Module Demonstrations ---")
 
-    print("\n--- Preprocessing Example with Dummy Financial CSV ---")
-    raw_dummy_financial_data = load_csv("dummy_financial.csv")
-    if raw_dummy_financial_data is not None:
-        print("\nRaw Dummy Financial Data:")
-        print(raw_dummy_financial_data)
-        print("\nMissing values before preprocessing:")
-        print(raw_dummy_financial_data.isnull().sum())
+    # Setup for dummy files
+    if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR) # Should be created above, but ensure for demo
+    dummy_csv_file = os.path.join(DATA_DIR, "demo_data.csv")
+    dummy_excel_file = os.path.join(DATA_DIR, "demo_data.xlsx")
 
-        preprocessed_dummy_data = preprocess_data(raw_dummy_financial_data)
-        print("\nPreprocessed Dummy Financial Data:")
-        print(preprocessed_dummy_data)
-        print("\nMissing values after preprocessing:")
-        print(preprocessed_dummy_data.isnull().sum())
-    print("--- End of Preprocessing Example ---\n")
+    # Create dummy CSV
+    pd.DataFrame({
+        'Date': ['2023-01-01', '2023-01-02', '2023-01-03'],
+        'Open': [100, 101, 102], 'High': [102, 103, 102.5],
+        'Low': [99, 100, 100.5], 'Adj Close': [101, 102, 101.5], # Test 'Adj Close' renaming
+        'Volume': [1000, 1200, 1100],
+        'SomeOtherColumn': ['x', 'y', 'z']
+    }).to_csv(dummy_csv_file, index=False)
 
-    print("\n--- Data Downloading and Preprocessing Examples ---")
-    # Yahoo Finance Example (AAPL)
-    print("\nFetching Apple Inc. (AAPL) data from Yahoo Finance...")
-    aapl_data_raw = download_data('AAPL', '2023-01-01', '2023-01-10', source='yahoo')
-    if aapl_data_raw is not None:
-        print("\nRaw AAPL Data (first 5 rows):")
-        print(aapl_data_raw.head())
+    # Create dummy Excel
+    pd.DataFrame({
+        'Timestamp': pd.to_datetime(['2023-02-01', '2023-02-02']),
+        'open': [200, 201], 'high': [202, 203], # Test lowercase renaming
+        'low': [199, 200], 'close': [201, 202],
+        'volume': [2000, 2100],
+        'EmptyColWithNaN': [np.nan, 1]
+    }).to_excel(dummy_excel_file, index=False)
 
-        print("\nPreprocessing AAPL data...")
-        aapl_data_processed = preprocess_data(aapl_data_raw)
-        print("\nPreprocessed AAPL Data (first 5 rows):")
-        print(aapl_data_processed.head())
-        print("\nMissing values in AAPL preprocessed data:")
-        print(aapl_data_processed.isnull().sum())
+    print(f"\n1. Testing load_csv with '{dummy_csv_file}':")
+    df_csv = load_csv(dummy_csv_file)
+    if df_csv is not None: print(df_csv.head())
 
-    # Binance Example (BTCUSDT) - will likely use cached if available, or fail if not due to geo-restriction
-    # For demonstration, let's create a dummy Binance-like cache file if it doesn't exist
-    # to ensure preprocessing gets tested for Binance structure too.
-    binance_cache_path = "data/BTCUSDT_BINANCE_20230101_20230110.csv"
-    if not os.path.exists(binance_cache_path):
-        try:
-            print(f"\nCreating dummy Binance cache file: {binance_cache_path} for demo purposes.")
-            # Structure: timestamp,Open,High,Low,Close,Volume
-            dummy_binance_content = (
-                "timestamp,Open,High,Low,Close,Volume\n"
-                "1672531200000,16500.0,16600.0,16400.0,16550.0,1000.0\n" # 2023-01-01 00:00:00
-                "1672617600000,16550.0,16700.0,,16650.0,1200.0\n"      # 2023-01-02 00:00:00 (Low is NaN)
-                "1672704000000,16650.0,16800.0,16600.0,16750.0,1100.0\n" # 2023-01-03 00:00:00
-            )
-            with open(binance_cache_path, "w") as f:
-                f.write(dummy_binance_content)
-        except Exception as e:
-            print(f"Error creating dummy Binance cache: {e}")
+    print(f"\n2. Testing load_xlsx with '{dummy_excel_file}':")
+    df_excel = load_xlsx(dummy_excel_file)
+    if df_excel is not None: print(df_excel.head())
 
-    print("\nFetching BTC/USDT data from Binance (may use dummy cache)...")
-    btcusdt_data_raw = download_data('BTCUSDT', '2023-01-01', '2023-01-10', source='binance')
-    if btcusdt_data_raw is not None:
-        print("\nRaw BTC/USDT Data (first 5 rows):")
-        # If loaded from the dummy cache, index might be int. If from real API, it's datetime.
-        # The download_data function already converts Binance index to datetime.
-        print(btcusdt_data_raw.head())
+    print("\n3. Testing preprocess_data with CSV data:")
+    if df_csv is not None:
+        df_processed_csv = preprocess_data(df_csv)
+        if df_processed_csv is not None:
+            print("Processed CSV data:")
+            print(df_processed_csv.head())
+            print("Info:")
+            df_processed_csv.info()
 
-        print("\nPreprocessing BTC/USDT data...")
-        btcusdt_data_processed = preprocess_data(btcusdt_data_raw.copy()) # Pass copy to avoid modifying original
-        print("\nPreprocessed BTC/USDT Data (first 5 rows):")
-        print(btcusdt_data_processed.head())
-        print("\nMissing values in BTC/USDT preprocessed data:")
-        print(btcusdt_data_processed.isnull().sum())
+    print("\n4. Testing preprocess_data with Excel data:")
+    if df_excel is not None:
+        df_processed_excel = preprocess_data(df_excel)
+        if df_processed_excel is not None:
+            print("Processed Excel data:")
+            print(df_processed_excel.head())
+            print("Info:")
+            df_processed_excel.info()
+            print("NaN check after preprocessing (Excel):")
+            print(df_processed_excel.isnull().sum())
 
-    print("\n--- End of Data Downloading and Preprocessing Examples ---")
+
+    print("\n5. Testing download_data (example with AAPL, short period):")
+    # This will use cache if already downloaded by other modules' tests
+    aapl_data = download_data('AAPL', '2023-01-01', '2023-01-10', source='yahoo')
+    if aapl_data is not None:
+        print("Downloaded AAPL data (head):")
+        print(aapl_data.head())
+        print("\nPreprocessing downloaded AAPL data:")
+        aapl_processed = preprocess_data(aapl_data)
+        if aapl_processed is not None:
+            print(aapl_processed.head())
+            print("Info for processed AAPL data:")
+            aapl_processed.info()
+            print("NaN check for processed AAPL data:")
+            print(aapl_processed.isnull().sum())
+
+    # Cleanup dummy files
+    if os.path.exists(dummy_csv_file): os.remove(dummy_csv_file)
+    if os.path.exists(dummy_excel_file): os.remove(dummy_excel_file)
+    print(f"\nCleaned up dummy files: {dummy_csv_file}, {dummy_excel_file}")
+
+    print("\n--- Data Manager Demonstrations Finished ---")

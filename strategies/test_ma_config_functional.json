@@ -1,0 +1,7 @@
+{
+    "strategy_name": "moving_average_crossover",
+    "params": {
+        "short_window": 10,
+        "long_window": 30
+    }
+}

@@ -1,0 +1,15 @@
+--- Trade Statistics Report ---
+Initial Cash: 100000.00
+Final Portfolio Value: 99266.94
+Total Net Profit: -733.06
+Total Transactions: 52
+Buy Transactions: 27
+Sell Transactions: 25
+Total Traded Volume Value: 72744.79
+Winning Trades: N/A (requires round-trip analysis)
+Losing Trades: N/A (requires round-trip analysis)
+Win Rate: N/A (requires round-trip analysis)
+Profit Factor: N/A (requires round-trip analysis)
+Average Win: N/A (requires round-trip analysis)
+Average Loss: N/A (requires round-trip analysis)
+Notes: Basic transaction stats. Round-trip trade analysis not yet implemented.

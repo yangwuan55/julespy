@@ -1,0 +1,9 @@
+{
+    "strategy_name": "rsi_strategy",
+    "params": {
+        "rsi_period": 10,
+        "overbought_threshold": 80.0,
+        "oversold_threshold": 20.0
+    },
+    "description": "RSI strategy for simple stub simulation."
+}

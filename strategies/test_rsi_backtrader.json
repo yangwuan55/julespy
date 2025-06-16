@@ -1,0 +1,9 @@
+{
+    "strategy_name": "rsi_strategy",
+    "params": {
+        "rsi_period": 14,
+        "overbought_threshold": 70.0,
+        "oversold_threshold": 30.0
+    },
+    "description": "RSI strategy for Backtrader."
+}

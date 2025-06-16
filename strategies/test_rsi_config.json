@@ -1,0 +1,9 @@
+{
+    "strategy_name": "rsi_strategy",
+    "params": {
+        "rsi_period": 14,
+        "overbought_threshold": 75.0,
+        "oversold_threshold": 25.0
+    },
+    "description": "A sample RSI strategy configuration for testing."
+}

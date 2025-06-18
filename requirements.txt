@@ -1,0 +1,10 @@
+PySide6
+pandas
+numpy
+backtrader
+yfinance
+openpyxl
+matplotlib
+# python-binance # Was installed at one point, but not directly used in final GUI/engine logic.
+                 # Add back if Binance download is to be re-enabled and used.
+# PyYAML         # Often a sub-dependency, e.g. for backtrader. Explicit if known direct use.
